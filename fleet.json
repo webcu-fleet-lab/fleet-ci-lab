@@ -10,7 +10,7 @@
     "production": ["plugin-a"]
   },
   "order": [],
-  "fleet": ["plugin-a", "plugin-b"],
+  "fleet": ["plugin-a", "plugin-b", "plugin-c"],
   "extras": [],
   "group": {
     "secrets": ["FLEET_TRIGGER_APP_ID", "FLEET_TRIGGER_APP_KEY"],
