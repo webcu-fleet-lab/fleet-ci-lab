@@ -75,7 +75,7 @@ def main(argv: list[str]) -> int:
                 failures += 1
                 continue
             current = {r["id"]: r["name"] for r in call("GET", f"{base}/repositories?per_page=100", token).get("repositories", [])}
-            add = sorted(name_ for id_, name_ in ids.items() if id_ not in current)
+            add = sorted(name_ for name_, id_ in ids.items() if id_ not in current)
             remove = sorted(name_ for id_, name_ in current.items() if id_ not in wanted)
             if not add and not remove:
                 print(f"{kind[:-1]} {name}: in sync ({len(current)} repos)")
