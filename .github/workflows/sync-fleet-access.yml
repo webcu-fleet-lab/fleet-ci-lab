@@ -1,0 +1,44 @@
+# The "group": the org secrets/variables the plugin runs need (trigger App id +
+# key, the two auto-deploy switches) are shared with exactly the repos listed in
+# fleet.json. This workflow keeps those sharing lists equal to fleet.json —
+# adding a plugin = one fleet.json commit, no admin, no per-repo secret.
+#
+# Token: the reader App's installation token (org permissions Secrets: write +
+# Variables: write). The secrets/variables themselves are created ONCE by an org
+# owner with visibility "selected"; this only edits their repository lists.
+name: Sync fleet access
+
+on:
+  push:
+    branches: [main]
+    paths: [fleet.json, scripts/sync_fleet_access.py, .github/workflows/sync-fleet-access.yml]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Only print the differences'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Mint org-admin token (reader App)
+        id: token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.FLEET_READER_APP_ID }}
+          private-key: ${{ secrets.FLEET_READER_APP_KEY }}
+          owner: webcu-fleet-lab
+
+      - name: Sync sharing lists with fleet.json
+        env:
+          SYNC_TOKEN: ${{ steps.token.outputs.token }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: python3 scripts/sync_fleet_access.py $([ "$DRY_RUN" = true ] && echo --dry-run)

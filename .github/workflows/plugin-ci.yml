@@ -1,0 +1,78 @@
+# Lab copy of goetz-fleet-ci's reusable plugin CI, reduced to what the fleet-CD
+# mechanics need: a test job, then the push trigger that starts deploy.yml HERE.
+#
+# Difference to the real plugin-ci.yml: the trigger token is minted per run from
+# a GitHub App (webcu-lab-fleet-trigger, permission Actions: write, installed on
+# THIS repo only) instead of being a stored PAT. The App's id + private key are
+# ORG secrets shared with the fleet repos (the "group", kept in sync from
+# fleet.json by sync-fleet-access.yml). Nothing per plugin repo, nothing expires.
+name: Plugin CI (reusable, lab)
+
+on:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # Only "is the App key here" (true/false) — the key itself stays in the mint
+      # step's input, never in the job env every step can read.
+      CD_HAS_TOKEN: ${{ secrets.FLEET_TRIGGER_APP_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Test (composer.json has a version)
+        run: |
+          python3 - <<'EOF'
+          import json, re, sys
+          v = json.load(open("composer.json")).get("version", "")
+          sys.exit(0 if re.fullmatch(r"\d+\.\d+\.\d+", v) else f"composer.json version missing or not x.y.z: {v!r}")
+          EOF
+          echo "::notice title=Version::$(python3 -c 'import json;print(json.load(open("composer.json"))["version"])')"
+
+      # Org variables CD_AUTO_DEPLOY_STAGING (dev pushes) / CD_AUTO_DEPLOY_PRODUCTION
+      # (main/master) are read from the CALLING repo (reusable workflows see the
+      # caller's variables) — that is why they are org variables shared with the group.
+      - name: Mint deploy trigger token
+        id: trigger-token
+        if: >-
+          success() && github.event_name == 'push' && env.CD_HAS_TOKEN == 'true' &&
+          ((github.ref == 'refs/heads/dev' && vars.CD_AUTO_DEPLOY_STAGING == 'true') ||
+           ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && vars.CD_AUTO_DEPLOY_PRODUCTION == 'true'))
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.FLEET_TRIGGER_APP_ID }}
+          private-key: ${{ secrets.FLEET_TRIGGER_APP_KEY }}
+          owner: webcu-fleet-lab
+          repositories: fleet-ci-lab
+
+      # Same step as in goetz-fleet-ci: continue-on-error so a failed trigger never
+      # turns the tests red; the token is passed to curl via stdin, never in argv.
+      - name: Trigger deploy
+        if: steps.trigger-token.outcome == 'success'
+        continue-on-error: true
+        env:
+          CD_TOKEN: ${{ steps.trigger-token.outputs.token }}
+        run: |
+          target=production
+          [ "$GITHUB_REF_NAME" = dev ] && target=staging
+          if printf 'Authorization: Bearer %s\n' "$CD_TOKEN" | curl -fsS --retry 3 --retry-all-errors --retry-delay 10 -m 30 \
+              -X POST -H @- \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -H "User-Agent: fleet-ci-lab-trigger" \
+              -d "{\"ref\":\"main\",\"inputs\":{\"target\":\"$target\",\"plugins\":\"all-pending\",\"dry_run\":\"true\"}}" \
+              https://api.github.com/repos/webcu-fleet-lab/fleet-ci-lab/actions/workflows/deploy.yml/dispatches; then
+            echo "::notice title=Deploy triggered::$target ($GITHUB_REPOSITORY $GITHUB_REF_NAME @ $(echo "$GITHUB_SHA" | cut -c1-8))"
+          else
+            echo "::error title=Deploy trigger failed::no $target deploy started for $GITHUB_REF_NAME @ $(echo "$GITHUB_SHA" | cut -c1-8) — check the App secrets, then start deploy.yml by hand"
+            exit 1
+          fi
+
+      # Auto-deploy on, but the org secrets do not reach this repo (not in the group yet).
+      - name: Deploy trigger without token
+        if: >-
+          success() && github.event_name == 'push' && env.CD_HAS_TOKEN != 'true' &&
+          ((github.ref == 'refs/heads/dev' && vars.CD_AUTO_DEPLOY_STAGING == 'true') ||
+           ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && vars.CD_AUTO_DEPLOY_PRODUCTION == 'true'))
+        run: echo "::warning title=No deploy triggered::auto-deploy is on, but FLEET_TRIGGER_APP_KEY does not reach this repo — add it to fleet.json (sync-fleet-access.yml shares the group secrets)"

@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "Lab fleet (webcu-fleet-lab). Same schema as goetz-fleet-ci/fleet.json plus 'group':",
+    "the org secrets/variables that sync-fleet-access.yml shares with exactly 'fleet' + 'extras'.",
+    "Adding a plugin = add its repo here (and its ci.yml stub there). Nothing else."
+  ],
+  "org": "webcu-fleet-lab",
+  "targets": {
+    "staging": "all",
+    "production": ["plugin-a"]
+  },
+  "order": [],
+  "fleet": ["plugin-a", "plugin-b"],
+  "extras": [],
+  "group": {
+    "secrets": ["FLEET_TRIGGER_APP_ID", "FLEET_TRIGGER_APP_KEY"],
+    "variables": ["CD_AUTO_DEPLOY_STAGING", "CD_AUTO_DEPLOY_PRODUCTION"]
+  }
+}

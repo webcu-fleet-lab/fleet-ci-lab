@@ -1,0 +1,74 @@
+# Lab copy of goetz-fleet-ci's deploy.yml — PLAN job only (there is no shop in the
+# lab; the Admin-API deploy job is unchanged by the App-token change and stays in
+# goetz-fleet-ci). scripts/deploy.py is the real one, verbatim.
+#
+# Difference to the real deploy.yml: the fleet-read token is minted per run from
+# a GitHub App (webcu-lab-fleet-reader: Contents/Actions read, installed on ALL
+# repos of the org ⇒ a new repo needs no token change) instead of a stored PAT.
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'staging (dev branches) or production (default branches)'
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      plugins:
+        description: 'Comma-separated plugin names, or "all-pending" for the whole fleet'
+        required: true
+        default: all-pending
+        type: string
+      dry_run:
+        description: 'Evaluate gates and print the plan without changing the shop'
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: deploy-${{ inputs.target }}${{ format('{0}', inputs.dry_run) == 'true' && '-dry-run' || '' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  plan:
+    name: Plan → ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    outputs:
+      pending: ${{ steps.plan.outputs.pending }}
+      shas: ${{ steps.plan.outputs.shas }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Mint fleet-read token
+        id: read-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.FLEET_READER_APP_ID }}
+          private-key: ${{ secrets.FLEET_READER_APP_KEY }}
+          owner: webcu-fleet-lab
+
+      - name: Plan from GitHub data
+        id: plan
+        env:
+          FLEET_READ_TOKEN: ${{ steps.read-token.outputs.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          INPUT_MODE: plan
+          INPUT_TARGET: ${{ inputs.target }}
+          INPUT_PLUGINS: ${{ inputs.plugins }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          AUTO_DEPLOY_STAGING: ${{ vars.CD_AUTO_DEPLOY_STAGING }}
+          AUTO_DEPLOY_PRODUCTION: ${{ vars.CD_AUTO_DEPLOY_PRODUCTION }}
+        run: python3 scripts/deploy.py
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deploy-report-plan-${{ inputs.target }}
+          path: deploy-report.json
+          if-no-files-found: ignore
